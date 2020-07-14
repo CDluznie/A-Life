@@ -5,33 +5,25 @@ import matplotlib.pyplot as plt
 
 class Environment:
 
-    def __init__(self, L):
+    def __init__(self, L, droplet_size):
         self.L = L
         
-        self.sx = 4 * self.L / 5
-        self.sy = 3 * self.L / 5
-        self.s = 1
-        self.sigma = 2e-5
+        self.droplet_size = droplet_size
+        self.droplet_position = None
         
     def density(self, x, y):
-        """
-        return 1./(1. + math.hypot(x-self.sx, y-self.sy) + self.s)
-        """
-        sigma = self.sigma
-        if sigma <= 1e-5:
+        if not self.droplet_position:
             return 0
-        return self.s*numpy.exp(-((x - self.sx)**2/(2*sigma*sigma) + (y - self.sy)**2/(2*sigma*sigma)))
+        droplet_x, droplet_y = self.droplet_position
+        sigma = 2*self.droplet_size*self.droplet_size
+        return numpy.exp(-((x - droplet_x)**2/(sigma) + (y - droplet_y)**2/(sigma)))
 
     def place_droplet(self, x, y):
-        print(x,y)
-        self.sigma = 2e-5
-        self.sx = x
-        self.sy = y
-		
+        self.droplet_position = (x, y)
+        
+    def remove_droplet(self):
+        self.droplet_position = None
 
-    def update(self):
-        #self.s -= 0.005
-        self.sigma *= 0.995
 
 class Bacteria:
 
@@ -80,25 +72,41 @@ class Bacteria:
         self.y %= environment.L
         self.density = current_density
 
-    
+
 class World:
 	
     DT = 0.2
     VELOCITY = 3e-6
     L = 100e-6
+    DROPLET_SIZE = 2e-05
+    OUTPUT_IMAGE_SIZE = 100
 	
-    def __init__(self, environment, bacterias):
+    def __init__(self, environment, bacterias, environment_image):
         self.environment = environment
         self.bacterias = bacterias
+        self.environment_image = environment_image
+        self.is_updated = False
     
     @staticmethod
     def random(number_bacterias):
-        environment = Environment(World.L)
+        environment = Environment(World.L, World.DROPLET_SIZE)
         bacterias = [
             Bacteria.random(environment, World.VELOCITY)
             for _ in range(number_bacterias)
         ]
-        return World(environment, bacterias)
+        environment_image = World.__environment_to_image(environment)
+        return World(environment, bacterias, environment_image)
+        
+    @staticmethod
+    def __environment_to_image(environment):
+        image = numpy.zeros((World.OUTPUT_IMAGE_SIZE, World.OUTPUT_IMAGE_SIZE))
+        for x in range(World.OUTPUT_IMAGE_SIZE):
+            for y in range(World.OUTPUT_IMAGE_SIZE):
+                image[y,x] = environment.density(
+                    x*environment.L/World.OUTPUT_IMAGE_SIZE,
+                    y*environment.L/World.OUTPUT_IMAGE_SIZE
+                )
+        return image
     
     def simulate(self):
         t = 0
@@ -106,42 +114,36 @@ class World:
             self.draw(t)
             for bacteria in self.bacterias:
                 bacteria.update(self.environment, World.DT)
-            self.environment.update()
             t += World.DT
 
     def draw(self, t):
-        n = 100
-        m = numpy.zeros((n,n))
-        for x in range(n):
-            for y in range(n):
-                m[y,x] = self.environment.density(x*self.environment.L/n,y*self.environment.L/n)
+        image = self.environment_image.copy()
         for bacteria in self.bacterias:
-            x,y = int((bacteria.x*n/self.environment.L)), int((bacteria.y*n/self.environment.L))  # TODO ERROR ROUND WITH BOUND MAX OF ARRAY
-            m[y,x] = 1
+            x = int((bacteria.x*World.OUTPUT_IMAGE_SIZE/self.environment.L))
+            y = int((bacteria.y*World.OUTPUT_IMAGE_SIZE/self.environment.L))
+            image[y,x] = 1
         figure = plt.figure(1)
         plt.clf()
         plt.axis("off")
-        plt.imshow(m)
-        figure.canvas.mpl_connect('button_press_event', lambda e:
-			self.environment.place_droplet(e.xdata*self.environment.L/n, e.ydata*self.environment.L/n)
-		)
-        plt.pause(0.001)
-        
-    def draw2(self, t):
-        n = 100
-        m = numpy.zeros((n,n,3))
-        
-        for x in range(n):
-            for y in range(n):
-                m[y,x,0] = self.environment.density(x*self.environment.L/n,y*self.environment.L/n)
-        
-        print(m[:,:,0])
-        
-        plt.figure(1)
-        plt.clf()
-        plt.axis("off")
-        plt.imshow(m)
-        plt.pause(0.001)
+        plt.ion()
+        plt.imshow(image)
+        self.is_updated = False
+        figure.canvas.mpl_connect('button_press_event', lambda e: self.process_click_event(e))
+        plt.pause(0.01)
+
+    def process_click_event(self, event):
+        if self.is_updated:
+            return
+        if event.button == 1:
+            self.environment.place_droplet(
+                event.xdata*self.environment.L/World.OUTPUT_IMAGE_SIZE,
+                event.ydata*self.environment.L/World.OUTPUT_IMAGE_SIZE
+            )
+        elif event.button == 3:
+            self.environment.remove_droplet()
+        self.environment_image = World.__environment_to_image(self.environment)
+        self.is_updated = True
+
 
 world = World.random(100)
 
